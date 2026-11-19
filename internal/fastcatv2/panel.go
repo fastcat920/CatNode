@@ -23,6 +23,7 @@ const grantPollInterval = 5 * time.Second
 type panelGrantSnapshot struct {
 	h2, h3  map[[sha256.Size]byte]struct{}
 	expires time.Time
+	mode    string
 }
 
 type panelGrants struct {
@@ -62,6 +63,7 @@ func (g *panelGrants) sync(ctx context.Context) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+g.token)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-FastCat-Transport-Modes", "1")
 	res, err := g.client.Do(req)
 	if err != nil {
 		return err
@@ -79,11 +81,15 @@ func (g *panelGrants) sync(ctx context.Context) error {
 		return errors.New("panel authorization snapshot too large")
 	}
 	var snapshot struct {
-		H2 []string `json:"h2"`
-		H3 []string `json:"h3"`
+		Mode string   `json:"transport_mode"`
+		H2   []string `json:"h2"`
+		H3   []string `json:"h3"`
 	}
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return err
+	}
+	if snapshot.Mode != "" && snapshot.Mode != "auto" && snapshot.Mode != "h2" && snapshot.Mode != "h3" {
+		return errors.New("panel returned an unknown transport mode")
 	}
 	if snapshot.H2 == nil || snapshot.H3 == nil || len(snapshot.H2) != len(snapshot.H3) {
 		return errors.New("panel authorization snapshot has invalid lists")
@@ -111,7 +117,7 @@ func (g *panelGrants) sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	g.active.Store(&panelGrantSnapshot{h2: h2, h3: h3, expires: time.Now().Add(45 * time.Second)})
+	g.active.Store(&panelGrantSnapshot{h2: h2, h3: h3, expires: time.Now().Add(45 * time.Second), mode: snapshot.Mode})
 	return nil
 }
 
@@ -141,6 +147,9 @@ func (g *panelGrants) authorize(h3 bool) func([]string) bool {
 		}
 		snapshot := g.active.Load()
 		if snapshot == nil || !time.Now().Before(snapshot.expires) {
+			return false
+		}
+		if (h3 && snapshot.mode == "h2") || (!h3 && snapshot.mode == "h3") {
 			return false
 		}
 		hashes := snapshot.h2

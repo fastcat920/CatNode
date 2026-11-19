@@ -42,8 +42,22 @@ func TestPanelGrantRefresh(t *testing.T) {
 	if !testAuth(false, h2) || !testAuth(true, h3) || testAuth(true, h2) || testAuth(false, h3) {
 		t.Fatal("credentials must only work on their assigned entrance")
 	}
+	response = `{"transport_mode":"h3","h2":["` + h2 + `"],"h3":["` + h3 + `"]}`
+	if err := grants.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if testAuth(false, h2) || !testAuth(true, h3) {
+		t.Fatal("HTTP/3 mode must reject HTTP/2")
+	}
+	response = `{"transport_mode":"h2","h2":["` + h2 + `"],"h3":["` + h3 + `"]}`
+	if err := grants.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !testAuth(false, h2) || testAuth(true, h3) {
+		t.Fatal("HTTP/2 mode must reject HTTP/3")
+	}
 	response = `{"h2":[],"h3":["broken"]}`
-	if grants.sync(context.Background()) == nil || !testAuth(false, h2) || !testAuth(true, h3) {
+	if grants.sync(context.Background()) == nil || !testAuth(false, h2) || testAuth(true, h3) {
 		t.Fatal("invalid refresh must retain the previous snapshot")
 	}
 	response = `{"h2":[],"h3":[]}`

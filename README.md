@@ -9,7 +9,7 @@ CatNode 是基于 [v2node](https://github.com/wyx2685/v2node) 的 Catboard 节�
 在 Linux x86_64 节点服务器执行：
 
 ```bash
-curl -fLO https://github.com/fastcat920/CatNode/releases/download/v0.1.0/catnode-linux-amd64.tar.gz
+curl -fLO https://github.com/fastcat920/CatNode/releases/download/v0.2.0/catnode-linux-amd64.tar.gz
 tar -xzf catnode-linux-amd64.tar.gz
 cd catnode-linux-amd64
 sudo bash install.sh
