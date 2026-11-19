@@ -21,7 +21,7 @@ import (
 const grantPollInterval = 5 * time.Second
 
 type panelGrantSnapshot struct {
-	h2, h3  map[[sha256.Size]byte]struct{}
+	h2, h3  map[[sha256.Size]byte]int64
 	expires time.Time
 	mode    string
 }
@@ -81,9 +81,10 @@ func (g *panelGrants) sync(ctx context.Context) error {
 		return errors.New("panel authorization snapshot too large")
 	}
 	var snapshot struct {
-		Mode string   `json:"transport_mode"`
-		H2   []string `json:"h2"`
-		H3   []string `json:"h3"`
+		Mode     string   `json:"transport_mode"`
+		H2       []string `json:"h2"`
+		H3       []string `json:"h3"`
+		Accounts []int64  `json:"account_ids"`
 	}
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return err
@@ -94,9 +95,12 @@ func (g *panelGrants) sync(ctx context.Context) error {
 	if snapshot.H2 == nil || snapshot.H3 == nil || len(snapshot.H2) != len(snapshot.H3) {
 		return errors.New("panel authorization snapshot has invalid lists")
 	}
-	read := func(tokens []string) (map[[sha256.Size]byte]struct{}, error) {
-		hashes := make(map[[sha256.Size]byte]struct{}, len(tokens))
-		for _, token := range tokens {
+	if snapshot.Accounts != nil && len(snapshot.Accounts) != len(snapshot.H2) {
+		return errors.New("panel authorization snapshot has invalid account mapping")
+	}
+	read := func(tokens []string) (map[[sha256.Size]byte]int64, error) {
+		hashes := make(map[[sha256.Size]byte]int64, len(tokens))
+		for i, token := range tokens {
 			_, err := hex.DecodeString(token)
 			if len(token) != 64 || err != nil || token != strings.ToLower(token) {
 				return nil, errors.New("panel returned an invalid credential")
@@ -105,7 +109,14 @@ func (g *panelGrants) sync(ctx context.Context) error {
 			if _, exists := hashes[hash]; exists {
 				return nil, errors.New("panel returned a duplicate credential")
 			}
-			hashes[hash] = struct{}{}
+			if snapshot.Accounts != nil {
+				if snapshot.Accounts[i] < 1 {
+					return nil, errors.New("invalid account ID")
+				}
+				hashes[hash] = snapshot.Accounts[i]
+			} else {
+				hashes[hash] = 0
+			}
 		}
 		return hashes, nil
 	}
@@ -138,25 +149,30 @@ func (g *panelGrants) poll(ctx context.Context) {
 
 func (g *panelGrants) authorize(h3 bool) func([]string) bool {
 	return func(values []string) bool {
-		if len(values) != 1 {
-			return false
-		}
-		scheme, token, ok := strings.Cut(values[0], " ")
-		if !ok || !strings.EqualFold(scheme, "Bearer") || len(token) != 64 {
-			return false
-		}
-		snapshot := g.active.Load()
-		if snapshot == nil || !time.Now().Before(snapshot.expires) {
-			return false
-		}
-		if (h3 && snapshot.mode == "h2") || (!h3 && snapshot.mode == "h3") {
-			return false
-		}
-		hashes := snapshot.h2
-		if h3 {
-			hashes = snapshot.h3
-		}
-		_, allowed := hashes[sha256.Sum256([]byte(token))]
+		_, allowed := g.account(h3, values)
 		return allowed
 	}
+}
+
+func (g *panelGrants) account(h3 bool, values []string) (int64, bool) {
+	if len(values) != 1 {
+		return 0, false
+	}
+	scheme, token, ok := strings.Cut(values[0], " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") || len(token) != 64 {
+		return 0, false
+	}
+	snapshot := g.active.Load()
+	if snapshot == nil || !time.Now().Before(snapshot.expires) {
+		return 0, false
+	}
+	if (h3 && snapshot.mode == "h2") || (!h3 && snapshot.mode == "h3") {
+		return 0, false
+	}
+	hashes := snapshot.h2
+	if h3 {
+		hashes = snapshot.h3
+	}
+	id, allowed := hashes[sha256.Sum256([]byte(token))]
+	return id, allowed
 }

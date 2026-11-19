@@ -6,6 +6,8 @@ After=network-online.target
 [Service]
 Type=simple
 DynamicUser=yes
+StateDirectory=catnode-fastcat-v2
+StateDirectoryMode=0700
 LoadCredential=fullchain.pem:/etc/catnode/fastcat-v2/fullchain.pem
 LoadCredential=privkey.pem:/etc/catnode/fastcat-v2/privkey.pem
 LoadCredential=h2.tokens:/etc/catnode/fastcat-v2/h2.tokens

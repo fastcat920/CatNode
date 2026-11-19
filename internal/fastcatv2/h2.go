@@ -19,7 +19,7 @@ import (
 	"github.com/wyx2685/v2node/internal/fastcatv2/h2server"
 )
 
-func runServer(ctx context.Context, args []string, ready func(), authorize func([]string) bool) error {
+func runServer(ctx context.Context, args []string, ready func(), authorize func([]string) (func(int), func(int), bool)) error {
 	flags := flag.NewFlagSet("server", flag.ContinueOnError)
 	curve := flags.String("tls-key-exchange", "", "default, x25519 or x25519mlkem768")
 	listen := flags.String("listen", "127.0.0.1:18444", "TLS entry address")
@@ -38,7 +38,7 @@ func runServer(ctx context.Context, args []string, ready func(), authorize func(
 	if *private && !loopbackAddress(*listen) {
 		return errors.New("private targets require a loopback test listener")
 	}
-	cfg := h2server.Config{Authorize: authorize,
+	cfg := h2server.Config{Meter: authorize,
 		TokensFile: *tokensFile, MaxTunnels: *maxTunnels,
 		AllowPrivateTargets: *private, SessionTimeout: *session,
 	}

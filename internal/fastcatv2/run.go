@@ -34,7 +34,7 @@ func run(ctx context.Context, args []string, ready func()) error {
 	common := []string{"-listen", *listen, "-cert", *cert, "-key", *key, "-tls-key-exchange", *curve}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	var h2Auth, h3Auth func([]string) bool
+	var h2Auth, h3Auth func([]string) (func(int), func(int), bool)
 	if *panel != "" || *panelKey != "" || *nodeID != 0 {
 		if *h2Tokens != "" || *h3Tokens != "" {
 			return errors.New("choose panel synchronization or local credential files")
@@ -46,14 +46,19 @@ func run(ctx context.Context, args []string, ready func()) error {
 		if err := grants.sync(ctx); err != nil {
 			return fmt.Errorf("initial authorization sync: %w", err)
 		}
-		h2Auth, h3Auth = grants.authorize(false), grants.authorize(true)
+		reporter := newTrafficReporter(grants, *nodeID)
+		h2Auth, h3Auth = reporter.meter(false), reporter.meter(true)
+		reportCtx, stopReporting := context.WithCancel(ctx)
+		reportDone := make(chan struct{})
+		go func() { defer close(reportDone); reporter.run(reportCtx) }()
+		defer func() { stopReporting(); <-reportDone }()
 		go grants.poll(ctx)
 	} else if *h2Tokens == "" || *h3Tokens == "" {
 		return errors.New("both local credential files are required")
 	}
 	results := make(chan error, 2)
 	listeners := make(chan struct{}, 2)
-	start := func(name string, run func(context.Context, []string, func(), func([]string) bool) error, tokens string, authorize func([]string) bool) {
+	start := func(name string, run func(context.Context, []string, func(), func([]string) (func(int), func(int), bool)) error, tokens string, authorize func([]string) (func(int), func(int), bool)) {
 		entryArgs := append(append([]string{}, common...), "-tokens-file", tokens)
 		go func() {
 			err := run(ctx, entryArgs, func() { listeners <- struct{}{} }, authorize)

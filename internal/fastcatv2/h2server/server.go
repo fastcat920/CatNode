@@ -13,6 +13,7 @@ import (
 
 type Config struct {
 	Authorize           func([]string) bool
+	Meter               func([]string) (func(int), func(int), bool)
 	Token               string
 	TokensFile          string // Newline-separated device tokens; mutually exclusive with Token.
 	MaxTunnels          int
@@ -22,6 +23,7 @@ type Config struct {
 
 type server struct {
 	authorize           func([]string) bool
+	meter               func([]string) (func(int), func(int), bool)
 	credentials         *entryauth.Store
 	slots               chan struct{}
 	allowPrivateTargets bool
@@ -47,7 +49,7 @@ func newServer(cfg Config) (*server, error) {
 		cfg.SessionTimeout = 30 * time.Minute
 	}
 	var creds *entryauth.Store
-	if cfg.Authorize == nil {
+	if cfg.Authorize == nil && cfg.Meter == nil {
 		var err error
 		creds, err = entryauth.New(cfg.Token, cfg.TokensFile)
 		if err != nil {
@@ -58,6 +60,7 @@ func newServer(cfg Config) (*server, error) {
 	return &server{
 		credentials:         creds,
 		authorize:           cfg.Authorize,
+		meter:               cfg.Meter,
 		slots:               make(chan struct{}, cfg.MaxTunnels),
 		allowPrivateTargets: cfg.AllowPrivateTargets,
 		sessionTimeout:      cfg.SessionTimeout,
@@ -81,7 +84,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "CONNECT required", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.authorize(r.Header.Values("Proxy-Authorization")) {
+	upload, download, allowed := s.access(r.Header.Values("Proxy-Authorization"))
+	if !allowed {
 		w.Header().Set("Proxy-Authenticate", "Bearer")
 		http.Error(w, "Proxy authentication required", http.StatusProxyAuthRequired)
 		return
@@ -131,7 +135,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	uploadDone := make(chan struct{})
 	go func() {
 		defer close(uploadDone)
-		_, err := io.Copy(upstream, r.Body)
+		_, err := io.Copy(meterWriter(upstream, upload), r.Body)
 		if err == nil {
 			// Propagate request END_STREAM to targets that wait for a FIN
 			// before producing their reply.
@@ -141,7 +145,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			upstream.Close()
 		}
 	}()
-	_, err = io.Copy(streamWriter{ResponseWriter: w, ctrl: ctrl}, upstream)
+	_, err = io.Copy(meterWriter(streamWriter{ResponseWriter: w, ctrl: ctrl}, download), upstream)
 	// A net/http handler can only send response END_STREAM by returning.
 	// End an unfinished upload when the destination finishes sending.
 	r.Body.Close()
@@ -165,4 +169,31 @@ func (w streamWriter) Write(p []byte) (int, error) {
 		err = w.ctrl.Flush()
 	}
 	return n, err
+}
+
+func (s *server) access(values []string) (func(int), func(int), bool) {
+	if s.meter != nil {
+		return s.meter(values)
+	}
+	return nil, nil, s.authorize(values)
+}
+
+type countedWriter struct {
+	io.Writer
+	add func(int)
+}
+
+func (w countedWriter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	if n > 0 {
+		w.add(n)
+	}
+	return n, err
+}
+
+func meterWriter(w io.Writer, add func(int)) io.Writer {
+	if add == nil {
+		return w
+	}
+	return countedWriter{w, add}
 }

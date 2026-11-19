@@ -18,7 +18,7 @@ import (
 	"github.com/wyx2685/v2node/internal/fastcatv2/h2server"
 )
 
-func runH3Server(ctx context.Context, args []string, ready func(), authorize func([]string) bool) error {
+func runH3Server(ctx context.Context, args []string, ready func(), authorize func([]string) (func(int), func(int), bool)) error {
 	f := flag.NewFlagSet("h3-server", flag.ContinueOnError)
 	listen := f.String("listen", "127.0.0.1:18444", "UDP listener")
 	certPath := f.String("cert", "", "certificate chain PEM")
@@ -37,7 +37,7 @@ func runH3Server(ctx context.Context, args []string, ready func(), authorize fun
 	if *private && !loopbackAddress(*listen) {
 		return errors.New("private targets require a loopback listener")
 	}
-	cfg := h2server.Config{Authorize: authorize, TokensFile: *file, AllowPrivateTargets: *private, MaxTunnels: *limit, SessionTimeout: *lifetime}
+	cfg := h2server.Config{Meter: authorize, TokensFile: *file, AllowPrivateTargets: *private, MaxTunnels: *limit, SessionTimeout: *lifetime}
 	if *file == "" {
 		cfg.Token = os.Getenv("FASTCAT_H3_TOKEN")
 	}

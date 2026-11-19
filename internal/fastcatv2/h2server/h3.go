@@ -34,7 +34,8 @@ func (h *H3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "CONNECT required", 405)
 		return
 	}
-	if !h.authorize(r.Header.Values("Proxy-Authorization")) {
+	upload, download, allowed := h.access(r.Header.Values("Proxy-Authorization"))
+	if !allowed {
 		w.Header().Set("Proxy-Authenticate", "Bearer")
 		http.Error(w, "Proxy authentication required", 407)
 		return
@@ -110,8 +111,8 @@ func (h *H3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer peer.Close()
 		// A single direction ending must wake the other, including idle UDP targets.
 		done := make(chan struct{})
-		go func() { defer close(done); relayPackets(up, peer); up.Close() }()
-		relayPackets(peer, up)
+		go func() { defer close(done); relayPackets(meterWriter(up, upload), peer); up.Close() }()
+		relayPackets(meterWriter(peer, download), up)
 		peer.Close()
 		up.Close()
 		<-done
@@ -120,14 +121,14 @@ func (h *H3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, e := io.Copy(up, str)
+		_, e := io.Copy(meterWriter(up, upload), str)
 		if e == nil {
 			up.(*net.TCPConn).CloseWrite()
 		} else {
 			up.Close()
 		}
 	}()
-	_, err = io.Copy(str, up)
+	_, err = io.Copy(meterWriter(str, download), up)
 	if err == nil {
 		str.Close()
 	} else {
@@ -138,7 +139,7 @@ func (h *H3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	<-done
 }
 
-func relayPackets(dst, src net.Conn) {
+func relayPackets(dst io.Writer, src net.Conn) {
 	buf := make([]byte, 65535)
 	for {
 		n, err := src.Read(buf)
