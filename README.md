@@ -20,6 +20,7 @@ sudo bash install.sh
 
 ## 上游与许可证
 
+上游源码基线为 [v2node 5c2360f](https://github.com/wyx2685/v2node/commit/5c2360f95db39f61271e701eabdee200ba8075ea)。
 原 v2node 源码及其许可证见 [LICENSE](LICENSE)。引入的 Mihomo 代码保留
 [原许可证](internal/fastcatv2/LICENSE-mihomo)。
 

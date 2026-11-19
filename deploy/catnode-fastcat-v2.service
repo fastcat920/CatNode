@@ -1,0 +1,22 @@
+[Unit]
+Description=CatNode FastCat v2
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+LoadCredential=fullchain.pem:/etc/catnode/fastcat-v2/fullchain.pem
+LoadCredential=privkey.pem:/etc/catnode/fastcat-v2/privkey.pem
+LoadCredential=h2.tokens:/etc/catnode/fastcat-v2/h2.tokens
+LoadCredential=h3.tokens:/etc/catnode/fastcat-v2/h3.tokens
+ExecStart=/usr/local/bin/catnode fastcat-v2 -listen 0.0.0.0:18447 -cert %d/fullchain.pem -key %d/privkey.pem -h2-tokens %d/h2.tokens -h3-tokens %d/h3.tokens
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
