@@ -19,7 +19,7 @@ import (
 	"github.com/wyx2685/v2node/internal/fastcatv2/h2server"
 )
 
-func runServer(ctx context.Context, args []string, ready func(), authorize func([]string) (func(int), func(int), bool)) error {
+func runServer(ctx context.Context, args []string, ready func(), authorize func([]string) (func(int), func(int), bool), site *os.Root) error {
 	flags := flag.NewFlagSet("server", flag.ContinueOnError)
 	curve := flags.String("tls-key-exchange", "", "default, x25519 or x25519mlkem768")
 	listen := flags.String("listen", "127.0.0.1:18444", "TLS entry address")
@@ -55,10 +55,18 @@ func runServer(ctx context.Context, args []string, ready func(), authorize func(
 	}
 	var protocols http.Protocols
 	protocols.SetHTTP2(true)
+	var altSvc string
+	nextProtos := []string{"h2"}
+	if site != nil {
+		protocols.SetHTTP1(true)
+		nextProtos = append(nextProtos, "http/1.1")
+		_, port, _ := net.SplitHostPort(*listen)
+		altSvc = fmt.Sprintf(`h3=":%s"; ma=86400`, port)
+	}
 	server := &http.Server{
-		Handler: logFirstH2Request(handler), Protocols: &protocols, ReadHeaderTimeout: 8 * time.Second,
+		Handler: websiteHandler(site, logFirstH2Request(handler), altSvc), Protocols: &protocols, ReadHeaderTimeout: 8 * time.Second,
 		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10,
-		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: []string{"h2"}, Certificates: []tls.Certificate{cert}},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: nextProtos, Certificates: []tls.Certificate{cert}},
 		// Each TLS connection gets its own context. Streams sharing it emit just one ready event.
 		ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
 			return context.WithValue(ctx, entryConnKey{}, &entryConn{})

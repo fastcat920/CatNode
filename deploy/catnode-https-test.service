@@ -1,0 +1,24 @@
+[Unit]
+Description=CatNode shared HTTPS test endpoint
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+LoadCredential=fullchain.pem:/etc/catnode/https-test/fullchain.pem
+LoadCredential=privkey.pem:/etc/catnode/https-test/privkey.pem
+LoadCredential=h2.tokens:/etc/catnode/https-test/h2.tokens
+LoadCredential=h3.tokens:/etc/catnode/https-test/h3.tokens
+ExecStart=/usr/local/bin/catnode-https-test fastcat-v2 -listen 0.0.0.0:443 -cert %d/fullchain.pem -key %d/privkey.pem -h2-tokens %d/h2.tokens -h3-tokens %d/h3.tokens -web-root /var/www/catnode-https-test
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

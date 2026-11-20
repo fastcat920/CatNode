@@ -8,6 +8,7 @@ import (
 
 type Settings struct {
 	Listen         string
+	WebRoot        string
 	Certificate    string
 	PrivateKey     string
 	H2Tokens       string
@@ -23,7 +24,7 @@ func (s Settings) Start(ctx context.Context) (<-chan error, error) {
 		return nil, errors.New("FastCatV2 requires Listen, Certificate, and PrivateKey")
 	}
 	args := []string{
-		"-listen", s.Listen, "-cert", s.Certificate, "-key", s.PrivateKey,
+		"-listen", s.Listen, "-web-root", s.WebRoot, "-cert", s.Certificate, "-key", s.PrivateKey,
 		"-h2-tokens", s.H2Tokens, "-h3-tokens", s.H3Tokens, "-tls-key-exchange", s.TLSKeyExchange,
 		"-panel", s.Panel, "-panel-token-file", s.PanelTokenFile, "-node-id", strconv.Itoa(s.NodeID),
 	}

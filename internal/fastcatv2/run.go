@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"os"
 )
 
 func Run(ctx context.Context, args []string) error {
@@ -19,6 +20,7 @@ func run(ctx context.Context, args []string, ready func()) error {
 	key := flags.String("key", "", "certificate private key PEM")
 	h2Tokens := flags.String("h2-tokens", "", "H2 credential file")
 	h3Tokens := flags.String("h3-tokens", "", "H3 credential file")
+	webRoot := flags.String("web-root", "", "optional public website document root")
 	panel := flags.String("panel", "", "HTTPS Catboard base URL")
 	panelKey := flags.String("panel-token-file", "", "file with Catboard server token")
 	nodeID := flags.Int("node-id", 0, "Catboard v2node ID")
@@ -30,6 +32,14 @@ func run(ctx context.Context, args []string, ready func()) error {
 	if err != nil || port == "" || port == "0" || *cert == "" || *key == "" ||
 		flags.NArg() != 0 {
 		return errors.New("a shared listen address, certificate, and key are required")
+	}
+	var site *os.Root
+	if *webRoot != "" {
+		site, err = openWebsite(*webRoot)
+		if err != nil {
+			return err
+		}
+		defer site.Close()
 	}
 	common := []string{"-listen", *listen, "-cert", *cert, "-key", *key, "-tls-key-exchange", *curve}
 	ctx, cancel := context.WithCancel(ctx)
@@ -58,10 +68,10 @@ func run(ctx context.Context, args []string, ready func()) error {
 	}
 	results := make(chan error, 2)
 	listeners := make(chan struct{}, 2)
-	start := func(name string, run func(context.Context, []string, func(), func([]string) (func(int), func(int), bool)) error, tokens string, authorize func([]string) (func(int), func(int), bool)) {
+	start := func(name string, run func(context.Context, []string, func(), func([]string) (func(int), func(int), bool), *os.Root) error, tokens string, authorize func([]string) (func(int), func(int), bool)) {
 		entryArgs := append(append([]string{}, common...), "-tokens-file", tokens)
 		go func() {
-			err := run(ctx, entryArgs, func() { listeners <- struct{}{} }, authorize)
+			err := run(ctx, entryArgs, func() { listeners <- struct{}{} }, authorize, site)
 			if err != nil {
 				err = fmt.Errorf("%s: %w", name, err)
 			}

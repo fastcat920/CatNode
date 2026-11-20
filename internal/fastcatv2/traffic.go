@@ -157,6 +157,7 @@ func (t *trafficReporter) flush(ctx context.Context) error {
 			return err
 		}
 	}
+	log.Printf("FastCat traffic uploaded: node=%d batch=%s accounts=%d", batch.Node, batch.ID, len(batch.Users))
 	t.pending = nil
 	return nil
 }

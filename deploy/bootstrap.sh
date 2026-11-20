@@ -13,7 +13,7 @@ for program in curl sha256sum tar; do
   command -v "$program" >/dev/null || { echo "缺少命令：$program" >&2; exit 1; }
 done
 
-base=https://github.com/fastcat920/CatNode/releases/download/v0.3.0
+base=https://github.com/fastcat920/CatNode/releases/download/v0.4.0
 archive=catnode-linux-amd64.tar.gz
 work=$(mktemp -d)
 cleanup() {

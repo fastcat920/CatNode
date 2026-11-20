@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path"
 	"time"
 
 	http "github.com/metacubex/http"
@@ -18,7 +19,7 @@ import (
 	"github.com/wyx2685/v2node/internal/fastcatv2/h2server"
 )
 
-func runH3Server(ctx context.Context, args []string, ready func(), authorize func([]string) (func(int), func(int), bool)) error {
+func runH3Server(ctx context.Context, args []string, ready func(), authorize func([]string) (func(int), func(int), bool), site *os.Root) error {
 	f := flag.NewFlagSet("h3-server", flag.ContinueOnError)
 	listen := f.String("listen", "127.0.0.1:18444", "UDP listener")
 	certPath := f.String("cert", "", "certificate chain PEM")
@@ -53,7 +54,7 @@ func runH3Server(ctx context.Context, args []string, ready func(), authorize fun
 	if err := quicprofile.ApplyQUIC(t, *mode); err != nil {
 		return err
 	}
-	srv := &http3.Server{Handler: handler, TLSConfig: t, EnableDatagrams: true, MaxHeaderBytes: 16 << 10, QUICConfig: &quic.Config{EnableDatagrams: true, MaxIdleTimeout: 60 * time.Second}}
+	srv := &http3.Server{Handler: h3WebsiteHandler(site, handler), TLSConfig: t, EnableDatagrams: true, MaxHeaderBytes: 16 << 10, QUICConfig: &quic.Config{EnableDatagrams: true, MaxIdleTimeout: 60 * time.Second}}
 	l, err := net.ListenPacket("udp", *listen)
 	if err != nil {
 		return err
@@ -70,4 +71,29 @@ func runH3Server(ctx context.Context, args []string, ready func(), authorize fun
 		return nil
 	}
 	return err
+}
+
+func h3WebsiteHandler(root *os.Root, tunnel http.Handler) http.Handler {
+	if root == nil {
+		return tunnel
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodConnect {
+			tunnel.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		file, info, err := openPublicFile(root, r.URL.Path)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer file.Close()
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		http.ServeContent(w, r, path.Base(file.Name()), info.ModTime(), file)
+	})
 }

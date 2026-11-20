@@ -6,7 +6,7 @@ usage() {
 用法：sudo bash install.sh [--api-host HTTPS_URL] [--node-id ID]
                          [--api-key KEY | --api-key-file FILE]
                          [--domain DOMAIN] [--port PORT]
-                         [--cert FILE --key FILE]
+                         [--cert FILE --key FILE] [--shared-https]
 
 省略通讯 Token 时会隐藏输入。未指定证书路径时，使用
 /etc/letsencrypt/live/<域名>/fullchain.pem 和 privkey.pem。
@@ -14,8 +14,10 @@ USAGE
 }
 
 api_host='' node_id='' api_key='' api_key_file='' domain='' port='' cert='' key=''
+shared_https=false
 while (($#)); do
   case "$1" in
+    --shared-https) shared_https=true; shift ;;
     -h|--help) usage; exit 0 ;;
     --api-host|--node-id|--api-key|--api-key-file|--domain|--port|--cert|--key)
       (($# >= 2)) || { usage >&2; exit 2; }
@@ -63,7 +65,12 @@ esac
 prompt api_host '面板 HTTPS 地址'
 prompt node_id '节点 ID'
 prompt domain '节点证书域名'
-prompt port '节点连接端口' 18447
+if $shared_https; then
+  prompt port '节点连接端口' 443
+  [[ $port == 443 ]] || die '共用 HTTPS 模式需要在 443 上监听。'
+else
+  prompt port '节点连接端口' 18447
+fi
 api_host=${api_host%/}
 [[ $api_host =~ ^https://[[:alnum:].:-]+(/[[:alnum:]._/-]*)?$ ]] || die '请输入面板的 HTTPS 地址。'
 [[ $node_id =~ ^[1-9][0-9]{0,9}$ ]] || die '节点 ID 必须为正整数。'
@@ -99,9 +106,18 @@ fi
 umask 077
 config=/etc/catnode/fastcat-v2
 unit=catnode-fastcat-v2.service
+web_root=''
+if $shared_https; then
+  config=/etc/catnode/fastcat-v2-443
+  unit=catnode-fastcat-v2-443.service
+  web_root=/var/www/catnode-fastcat-v2-443
+  [[ -r $bundle/site/index.html || -r $web_root/index.html ]] ||
+    die '缺少共用 HTTPS 的网站首页。'
+fi
 unit_path=/etc/systemd/system/$unit
 dropin=$unit_path.d/managed.conf
 binary=/usr/local/bin/catnode
+if $shared_https; then binary=/usr/local/bin/catnode-443; fi
 install -d -m 0700 "$config"
 install -d -m 0755 "$(dirname "$dropin")" "$(dirname "$binary")"
 backup=$(mktemp -d)
@@ -136,12 +152,21 @@ install -m 0755 "$bundle/catnode" "$binary.new"
 mv -- "$binary.new" "$binary"
 install -m 0644 "$bundle/catnode-fastcat-v2.service" "$unit_path"
 install -m 0644 "$bundle/catnode-fastcat-v2-managed.conf" "$dropin"
+if $shared_https; then
+  sed -i 's|/etc/catnode/fastcat-v2/|/etc/catnode/fastcat-v2-443/|g; s|/usr/local/bin/catnode |/usr/local/bin/catnode-443 |g' "$dropin"
+  sed -i '/^DynamicUser=yes/a AmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE' "$unit_path"
+  sed -i 's/^StateDirectory=catnode-fastcat-v2$/StateDirectory=catnode-fastcat-v2-443/' "$unit_path"
+  install -d -m 0755 "$web_root"
+  if [[ ! -e $web_root/index.html ]]; then
+    install -m 0644 "$bundle/site/index.html" "$web_root/index.html"
+  fi
+fi
 if [[ ! "$cert" -ef "$config/fullchain.pem" ]]; then install -m 0600 "$cert" "$config/fullchain.pem"; fi
 if [[ ! "$key" -ef "$config/privkey.pem" ]]; then install -m 0600 "$key" "$config/privkey.pem"; fi
 chmod 0600 "$config/fullchain.pem" "$config/privkey.pem"
 printf '%s\n' "$api_key" > "$config/panel.token"
 chmod 0600 "$config/panel.token"
-printf 'FASTCAT_PANEL_URL=%s\nFASTCAT_NODE_ID=%s\nFASTCAT_PORT=%s\n' "$api_host" "$node_id" "$port" > "$config/panel.env"
+printf 'FASTCAT_PANEL_URL=%s\nFASTCAT_NODE_ID=%s\nFASTCAT_PORT=%s\nFASTCAT_WEB_ROOT=%s\n' "$api_host" "$node_id" "$port" "$web_root" > "$config/panel.env"
 systemctl daemon-reload
 systemctl restart "$unit"
 sleep 2
