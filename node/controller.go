@@ -14,6 +14,7 @@ import (
 )
 
 type Controller struct {
+	pendingTraffic          []panel.UserTraffic
 	server                  *core.V2Core
 	apiClient               *panel.Client
 	tag                     string

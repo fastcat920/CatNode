@@ -163,7 +163,7 @@ func (c *Client) GetNodeInfo(ctx context.Context) (node *NodeInfo, err error) {
 		return nil, fmt.Errorf("decode node params error: %s", err)
 	}
 	switch cm.Protocol {
-	case "vmess", "trojan", "hysteria2", "tuic", "anytls", "vless":
+	case "vmess", "trojan", "hysteria2", "tuic", "anytls", "vless", "fcn-v1", "fcn-v2":
 		node.Type = cm.Protocol
 		node.Security = cm.Tls
 	case "shadowsocks":

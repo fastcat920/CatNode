@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - master
     paths:
       - "**/*.go"
@@ -175,3 +176,52 @@ jobs:
           file: ./v2node-${{ steps.get_filename.outputs.ASSET_NAME }}.zip*
           tag: ${{ github.ref }}
           file_glob: true
+
+  catnode-bundle:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.3'
+      - name: Test FCN integration
+        run: |
+          go test ./core ./node ./api/v2board
+          (cd protocol/fcn && go test ./...)
+      - name: Package CatNode
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          name=catnode-linux-${GOARCH}
+          mkdir -p "dist/$name"
+          go build -trimpath -ldflags '-s -w' -o "dist/$name/catnode" .
+          cp deploy/install.sh deploy/native-install.sh deploy/catnode-fastcat-v2.service deploy/catnode-fastcat-v2-managed.conf LICENSE "dist/$name/"
+          mkdir -p "dist/$name/site"
+          cp deploy/website/index.html "dist/$name/site/"
+          cp protocol/fcn/NOTICE "dist/$name/FCN-NOTICE"
+          cp deploy/bootstrap.sh dist/bootstrap.sh
+          (cd dist && tar -czf "$name.tar.gz" "$name" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+      - uses: actions/upload-artifact@v6
+        with:
+          name: catnode-linux-${{ matrix.arch }}
+          path: dist/*
+      - name: Upload CatNode bundle
+        if: github.event_name == 'release'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: dist/catnode-linux-${{ matrix.arch }}.tar.gz*
+          tag: ${{ github.ref }}
+          file_glob: true
+      - name: Upload bootstrap
+        if: github.event_name == 'release' && matrix.arch == 'amd64'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: dist/bootstrap.sh
+          tag: ${{ github.ref }}

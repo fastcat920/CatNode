@@ -88,6 +88,9 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 			userlist.Users = append(userlist.Users, u)
 		}
 	}
+	if userlist.Users == nil {
+		userlist.Users = make([]UserInfo, 0)
+	}
 	c.userEtag = r.Header().Get("ETag")
 	return userlist.Users, nil
 }
@@ -133,13 +136,19 @@ func (c *Client) ReportUserTraffic(ctx context.Context, userTraffic []UserTraffi
 		data[userTraffic[i].UID] = []int64{userTraffic[i].Upload, userTraffic[i].Download}
 	}
 	const path = "/api/v1/server/UniProxy/push"
-	_, err := c.client.R().
+	response, err := c.client.R().
 		SetContext(ctx).
 		SetBody(data).
 		ForceContentType("application/json").
 		Post(path)
 	if err != nil {
 		return err
+	}
+	if response == nil || response.StatusCode() < 200 || response.StatusCode() >= 300 {
+		if response == nil {
+			return fmt.Errorf("traffic report: empty response")
+		}
+		return fmt.Errorf("traffic report HTTP %d", response.StatusCode())
 	}
 	return nil
 }

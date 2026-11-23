@@ -43,6 +43,10 @@ func (v *V2Core) GetUserManager(tag string) (proxy.UserManager, error) {
 }
 
 func (vc *V2Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) error {
+	if n := vc.fcnNode(tag); n != nil {
+		n.delUsers(users)
+		return nil
+	}
 	userManager, err := vc.GetUserManager(tag)
 	if err != nil {
 		return fmt.Errorf("get user manager error: %s", err)
@@ -84,8 +88,8 @@ func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserT
 			up := traffic.UpCounter.Load()
 			down := traffic.DownCounter.Load()
 			if up+down > int64(mintraffic*1000) {
-				traffic.UpCounter.Store(0)
-				traffic.DownCounter.Store(0)
+				up = traffic.UpCounter.Swap(0)
+				down = traffic.DownCounter.Swap(0)
 				if vc.users.uidMap[email] == 0 {
 					c.Delete(email)
 					return true
@@ -107,6 +111,18 @@ func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserT
 }
 
 func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {
+	if n := v.fcnNode(p.Tag); n != nil {
+		count, err := n.addUsers(p.Users)
+		if err != nil {
+			return 0, err
+		}
+		v.users.mapLock.Lock()
+		defer v.users.mapLock.Unlock()
+		for _, u := range p.Users {
+			v.users.uidMap[format.UserTag(p.Tag, strings.ToLower(u.Uuid))] = u.Id
+		}
+		return count, nil
+	}
 	v.users.mapLock.Lock()
 	defer v.users.mapLock.Unlock()
 	for i := range p.Users {

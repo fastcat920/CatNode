@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ ${1:-} == --native ]]; then
+ shift
+ exec bash "$(dirname -- "${BASH_SOURCE[0]}")/native-install.sh" "$@"
+fi
+
 usage() {
   cat <<'USAGE'
 用法：sudo bash install.sh [--api-host HTTPS_URL] [--node-id ID]

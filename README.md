@@ -51,3 +51,7 @@ GOEXPERIMENT=jsonv2 go build -v -o build_assets/v2node -trimpath -ldflags "-X 'g
 [![Stargazers over time](https://starchart.cc/wyx2685/v2node.svg?variant=adaptive)](https://starchart.cc/wyx2685/v2node)
 
 </details>
+
+## FCN v1 / FCN v2
+
+Next 单连接正式名称为 **FCN v1**，恢复状态选路正式名称为 **FCN v2**。两者已接入标准节点生命周期、账号 UUID、限速与计量；部署与兼容性见 [FCN 接入说明](deploy/fcn.md)。
