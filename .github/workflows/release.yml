@@ -199,7 +199,8 @@ jobs:
         run: |
           name=catnode-linux-${GOARCH}
           mkdir -p "dist/$name"
-          go build -trimpath -ldflags '-s -w' -o "dist/$name/catnode" .
+          version="${GITHUB_REF_NAME:-development}"
+          go build -trimpath -ldflags "-s -w -X github.com/wyx2685/v2node/cmd.version=$version" -o "dist/$name/catnode" .
           cp deploy/install.sh deploy/native-install.sh deploy/catnode-fastcat-v2.service deploy/catnode-fastcat-v2-managed.conf LICENSE "dist/$name/"
           mkdir -p "dist/$name/site"
           cp deploy/website/index.html "dist/$name/site/"
