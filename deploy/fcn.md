@@ -15,7 +15,7 @@ FCN v1 是已测试的 Next 单连接配置；FCN v2 是恢复状态选路配置
 
 账号权限、到期、流量、限速和在线 IP 管理复用现有 V2node 接口。用账号 UUID 派生认证密钥，OPEN 的 HMAC 绑定 TLS exporter 和随机 nonce。不额外签发设备证明或维护授权目录。UUID 是秘密凭证，不应公开。
 
-新版 App 根据原生核心导出的 `fastCatSupportsFCN` 自动添加 `fc_fcn=1`。面板只给具备此能力的 FastCat 加密订阅下发 FCN。旧 App 和普通第三方 Clash 客户端不会收到无法解析的 FCN 项。加密订阅信封仍为 `fastcat-v1`，与传输协议版本无关。
+新版 App 根据原生核心导出的 `fastCatSupportsFCN` 自动添加 `fc_fcn=1`。FCN 下发不按客户端版本过滤，只按正常账号权限组规则。客户端实际连接仍需支持该协议及所选验证方式。加密订阅信封仍为 `fastcat-v1`，与传输协议版本无关。
 
 ```yaml
 - name: FCN v2
@@ -60,3 +60,11 @@ python3 tools/sync-fcn.py /path/to/FastCatAPP --check
 ```
 
 `protocol/fcn` 为规范实现；App 内置副本需用同步脚本保持完全一致。BBR 实现保留 Mihomo 原有代码及 GPL 授权声明。
+
+## 自签证书 + 固定公钥（2026-11-24）
+
+新增显式 `tls-trust: spki` 与 `server-public-key-pins`。使用 SHA256(DER SubjectPublicKeyInfo)，仍验证叶证书名称、有效期和服务器认证用途。错误 pin、缺失 pin 或格式错误会失败；不会回退到 CA 或跳过校验。
+
+面板管理模式生成含 SAN 的 ECDSA P-256 证书，使用现有 `remote` 证书配置发给节点；CatNode v0.5.0 的服务端已支持，不要求仅为此功能重新部署。到期前用同一密钥续签不改变 SPKI。换密钥需明确操作并刷新订阅，当前面板不提供双阶段零中断换钥。
+
+节点可使用 `www.bing.com` 作为自签证书名称，但身份来自固定公钥，不代表 Bing 官方身份；没有因此验证隐蔽性提升。已有 CA 节点不会自动转换。节点下发仅按账号权限组，不按 FCN 能力标记筛选。
