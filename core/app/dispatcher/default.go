@@ -258,6 +258,15 @@ func (d *DefaultDispatcher) shouldOverride(ctx context.Context, result SniffResu
 }
 
 // Dispatch implements routing.Dispatcher.
+type uplinkWriterKey struct{}
+
+// WithUplinkWriter lets a caller of Xray's Dial close the write half of its
+// dispatcher pipe without discarding the response reader.
+func WithUplinkWriter(ctx context.Context) (context.Context, *buf.Writer) {
+	writer := new(buf.Writer)
+	return context.WithValue(ctx, uplinkWriterKey{}, writer), writer
+}
+
 func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destination) (*transport.Link, error) {
 	if !destination.IsValid() {
 		panic("Dispatcher: Invalid destination.")
@@ -279,6 +288,9 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 	inbound, outbound, _, err := d.getLink(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if writer, ok := ctx.Value(uplinkWriterKey{}).(*buf.Writer); ok {
+		*writer = inbound.Writer
 	}
 	if !sniffingRequest.Enabled {
 		go d.routedDispatch(ctx, outbound, destination)

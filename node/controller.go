@@ -57,8 +57,15 @@ func (c *Controller) Start(x *core.V2Core) error {
 	if err != nil {
 		return fmt.Errorf("get user list error: %s", err)
 	}
-	if len(c.userList) == 0 {
+	if c.userList == nil || len(c.userList) == 0 && node.Type != "fcn-v3" {
 		return errors.New("add users error: not have any user")
+	}
+	limiterUsers := c.userList
+	if node.Type == "fcn-v3" {
+		limiterUsers, err = core.FCNV3LimiterUsers(c.userList)
+		if err != nil {
+			return err
+		}
 	}
 	c.aliveMap, err = c.apiClient.GetUserAlive(context.Background())
 	if err != nil {
@@ -67,8 +74,19 @@ func (c *Controller) Start(x *core.V2Core) error {
 	c.tag = node.Tag
 
 	// add limiter
-	l := limiter.AddLimiter(c.info.Type, c.tag, c.userList, c.aliveMap)
+	l := limiter.AddLimiter(c.info.Type, c.tag, limiterUsers, c.aliveMap)
 	c.limiter = l
+	started, listener := false, false
+	if node.Type == "fcn-v3" {
+		defer func() {
+			if !started {
+				if listener {
+					_ = c.server.DelNode(c.tag)
+				}
+				limiter.DeleteLimiter(c.tag)
+			}
+		}()
+	}
 	if node.Security == panel.Tls {
 		err = c.requestCert()
 		if err != nil {
@@ -80,6 +98,7 @@ func (c *Controller) Start(x *core.V2Core) error {
 	if err != nil {
 		return fmt.Errorf("add new node error: %s", err)
 	}
+	listener = true
 	added, err := c.server.AddUsers(&core.AddUsersParams{
 		Tag:      c.tag,
 		Users:    c.userList,
@@ -91,6 +110,7 @@ func (c *Controller) Start(x *core.V2Core) error {
 	log.WithField("tag", c.tag).Infof("Added %d new users", added)
 	c.info = node
 	c.startTasks(node)
+	started = true
 	return nil
 }
 

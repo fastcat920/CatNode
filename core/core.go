@@ -28,6 +28,7 @@ type AddUsersParams struct {
 type V2Core struct {
 	fcnMu      sync.Mutex
 	fcnNodes   map[string]*fcnNode
+	fcnV3Nodes map[string]*fcnV3Node
 	Config     *conf.Conf
 	ReloadCh   chan struct{}
 	access     sync.Mutex
@@ -72,8 +73,13 @@ func (v *V2Core) Close() error {
 	v.fcnMu.Lock()
 	nodes := v.fcnNodes
 	v.fcnNodes = nil
+	v3Nodes := v.fcnV3Nodes
+	v.fcnV3Nodes = nil
 	v.fcnMu.Unlock()
 	for _, n := range nodes {
+		n.close()
+	}
+	for _, n := range v3Nodes {
 		n.close()
 	}
 	v.Config = nil

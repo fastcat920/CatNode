@@ -5,6 +5,7 @@ go 1.27.3
 godebug multipathtcp=0
 
 require (
+	github.com/fastcat920/fcnv3 v0.0.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-acme/lego/v4 v4.35.2
 	github.com/go-resty/resty/v2 v2.17.2
@@ -82,6 +83,7 @@ require (
 	github.com/clbanning/mxj/v2 v2.7.0 // indirect
 	github.com/dimchansky/utfbom v1.1.1 // indirect
 	github.com/dnsimple/dnsimple-go/v4 v4.0.0 // indirect
+	github.com/dunglas/httpsfv v1.0.2 // indirect
 	github.com/exoscale/egoscale/v3 v3.1.34 // indirect
 	github.com/fatih/structs v1.1.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
@@ -273,3 +275,5 @@ replace (
 
 require github.com/fastcat920/fcn v0.0.0
 replace github.com/fastcat920/fcn => ./protocol/fcn
+
+replace github.com/fastcat920/fcnv3 => ./protocol/fcnv3

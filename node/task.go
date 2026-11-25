@@ -91,6 +91,9 @@ func (c *Controller) nodeInfoMonitor(ctx context.Context) (err error) {
 	// get user alive
 	newA, err := c.apiClient.GetUserAlive(ctx)
 	if err != nil {
+		if c.info.Type == "fcn-v3" && newU != nil {
+			c.apiClient.InvalidateUserListETag()
+		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
@@ -103,11 +106,18 @@ func (c *Controller) nodeInfoMonitor(ctx context.Context) (err error) {
 
 	// update alive list
 	if newA != nil {
-		c.limiter.AliveList = newA
+		c.limiter.SetAliveList(newA)
 	}
 	// node no changed, check users
 	if newU == nil {
 		log.WithField("tag", c.tag).Debug("User list no change")
+		return nil
+	}
+	if c.info.Type == "fcn-v3" {
+		if err := c.replaceFCNV3Users(newU); err != nil {
+			c.apiClient.InvalidateUserListETag()
+			log.WithField("tag", c.tag).WithError(err).Error("Replace FCN v3 users failed")
+		}
 		return nil
 	}
 	deleted, added, modified := compareUserList(c.userList, newU)
@@ -143,5 +153,27 @@ func (c *Controller) nodeInfoMonitor(ctx context.Context) (err error) {
 	}
 	c.userList = newU
 	log.WithField("tag", c.tag).Infof("%d user deleted, %d user added, %d user modified", len(deleted), len(added), len(modified))
+	return nil
+}
+
+func (c *Controller) replaceFCNV3Users(users []panel.UserInfo) error {
+	before, err := vCore.FCNV3LimiterUsers(c.userList)
+	if err != nil {
+		return err
+	}
+	after, err := vCore.FCNV3LimiterUsers(users)
+	if err != nil {
+		return err
+	}
+	deleted, added, modified := compareUserList(before, after)
+	// Add limiter state before opening new authorizations. Stop old leases
+	// before retiring access state, and retain their accumulated traffic.
+	c.limiter.UpdateUser(c.tag, added, nil, nil)
+	if err := c.server.ReplaceFCNV3Users(c.tag, users); err != nil {
+		c.limiter.UpdateUser(c.tag, nil, added, nil)
+		return err
+	}
+	c.limiter.UpdateUser(c.tag, nil, deleted, modified)
+	c.userList = users
 	return nil
 }

@@ -191,6 +191,7 @@ jobs:
         run: |
           go test ./core ./node ./api/v2board
           (cd protocol/fcn && go test ./...)
+          (cd protocol/fcnv3 && go test ./...)
       - name: Package CatNode
         env:
           GOOS: linux
@@ -205,7 +206,12 @@ jobs:
           mkdir -p "dist/$name/site"
           cp deploy/website/index.html "dist/$name/site/"
           cp protocol/fcn/NOTICE "dist/$name/FCN-NOTICE"
-          cp deploy/bootstrap.sh dist/bootstrap.sh
+          if [[ ${GITHUB_REF_TYPE:-} == tag ]]; then
+            [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'Invalid CatNode release tag' >&2; exit 1; }
+            sed "s|^base=.*|base=https://github.com/fastcat920/CatNode/releases/download/$version|" deploy/bootstrap.sh > dist/bootstrap.sh
+          else
+            cp deploy/bootstrap.sh dist/bootstrap.sh
+          fi
           (cd dist && tar -czf "$name.tar.gz" "$name" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
       - uses: actions/upload-artifact@v6
         with:

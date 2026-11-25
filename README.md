@@ -55,3 +55,7 @@ GOEXPERIMENT=jsonv2 go build -v -o build_assets/v2node -trimpath -ldflags "-X 'g
 ## FCN v1 / FCN v2
 
 Next 单连接正式名称为 **FCN v1**，恢复状态选路正式名称为 **FCN v2**。两者已接入标准节点生命周期、账号 UUID、限速与计量；部署与兼容性见 [FCN 接入说明](deploy/fcn.md)。
+
+## FCN v3
+
+FCN v3 通过 HTTP/3 CONNECT 转发 TCP，并通过 CONNECT-UDP 转发 UDP。标准 V2Node 节点使用面板的账号、路由、限速和流量统计。证书要求、部署方式与已知限制见 [FCN v3 接入说明](deploy/fcn-v3.md)。

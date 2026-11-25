@@ -163,6 +163,17 @@ func (c *Client) GetNodeInfo(ctx context.Context) (node *NodeInfo, err error) {
 		return nil, fmt.Errorf("decode node params error: %s", err)
 	}
 	switch cm.Protocol {
+	case "fcn-v3":
+		if cm.Tls != Tls {
+			return nil, fmt.Errorf("FCN v3 requires TLS")
+		}
+		switch cm.TlsSettings.CertMode {
+		case "file", "dns", "http":
+		default:
+			return nil, fmt.Errorf("FCN v3 requires file, DNS or HTTP certificate mode")
+		}
+		node.Type = cm.Protocol
+		node.Security = cm.Tls
 	case "vmess", "trojan", "hysteria2", "tuic", "anytls", "vless", "fcn-v1", "fcn-v2":
 		node.Type = cm.Protocol
 		node.Security = cm.Tls

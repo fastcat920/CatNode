@@ -43,6 +43,13 @@ func (v *V2Core) GetUserManager(tag string) (proxy.UserManager, error) {
 }
 
 func (vc *V2Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) error {
+	if n := vc.fcnV3Node(tag); n != nil {
+		accounts, err := fcnV3Accounts(users)
+		if err != nil {
+			return err
+		}
+		return n.updateAccounts(vc.users, accounts, true)
+	}
 	if n := vc.fcnNode(tag); n != nil {
 		n.delUsers(users)
 		return nil
@@ -111,6 +118,16 @@ func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserT
 }
 
 func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {
+	if n := v.fcnV3Node(p.Tag); n != nil {
+		accounts, err := fcnV3Accounts(p.Users)
+		if err != nil {
+			return 0, err
+		}
+		if err := n.updateAccounts(v.users, accounts, false); err != nil {
+			return 0, err
+		}
+		return len(accounts), nil
+	}
 	if n := v.fcnNode(p.Tag); n != nil {
 		count, err := n.addUsers(p.Users)
 		if err != nil {

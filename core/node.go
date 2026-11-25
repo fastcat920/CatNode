@@ -7,6 +7,9 @@ import (
 )
 
 func (v *V2Core) AddNode(tag string, info *panel.NodeInfo) error {
+	if info.Type == "fcn-v3" {
+		return v.addFCNV3(tag, info)
+	}
 	if isFCN(info.Type) {
 		return v.addFCN(tag, info)
 	}
@@ -22,7 +25,7 @@ func (v *V2Core) AddNode(tag string, info *panel.NodeInfo) error {
 }
 
 func (v *V2Core) DelNode(tag string) error {
-	if v.delFCN(tag) {
+	if v.delFCNV3(tag) || v.delFCN(tag) {
 		return nil
 	}
 	err := v.removeInbound(tag)

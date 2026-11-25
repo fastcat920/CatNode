@@ -52,6 +52,9 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 	if r.StatusCode() == 304 {
 		return nil, nil
 	}
+	if r.StatusCode() != 200 {
+		return nil, fmt.Errorf("user list HTTP %d", r.StatusCode())
+	}
 	userlist := &UserListBody{}
 	if strings.Contains(r.Header().Get("Content-Type"), "application/x-msgpack") {
 		decoder := msgpack.NewDecoder(r.RawResponse.Body)
@@ -95,6 +98,9 @@ func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 	return userlist.Users, nil
 }
 
+// InvalidateUserListETag requests a full snapshot when runtime application fails.
+func (c *Client) InvalidateUserListETag() { c.userEtag = "" }
+
 // GetUserAlive will fetch the alive_ip count for users
 func (c *Client) GetUserAlive(ctx context.Context) (map[int]int, error) {
 	c.AliveMap = &AliveMap{}
@@ -131,9 +137,10 @@ type UserTraffic struct {
 
 // ReportUserTraffic reports the user traffic
 func (c *Client) ReportUserTraffic(ctx context.Context, userTraffic []UserTraffic) error {
-	data := make(map[int][]int64, len(userTraffic))
-	for i := range userTraffic {
-		data[userTraffic[i].UID] = []int64{userTraffic[i].Upload, userTraffic[i].Download}
+	data := make(map[int][2]int64, len(userTraffic))
+	for _, user := range userTraffic {
+		usage := data[user.UID]
+		data[user.UID] = [2]int64{usage[0] + user.Upload, usage[1] + user.Download}
 	}
 	const path = "/api/v1/server/UniProxy/push"
 	response, err := c.client.R().
