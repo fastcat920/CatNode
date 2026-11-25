@@ -2,14 +2,12 @@ package core
 
 import (
 	"context"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/fastcat920/fcn"
 	"github.com/fastcat920/fcnv3"
@@ -59,48 +57,11 @@ func fcnV3Certificate(ci *panel.CertInfo) (*tls.Config, error) {
 	default:
 		return nil, errors.New("FCN v3 requires file, DNS or HTTP certificate mode")
 	}
-	load := func() (*tls.Certificate, error) {
-		pair, err := tls.LoadX509KeyPair(ci.CertFile, ci.KeyFile)
-		if err != nil {
-			return nil, err
-		}
-		if pair.Leaf == nil {
-			pair.Leaf, err = x509.ParseCertificate(pair.Certificate[0])
-			if err != nil {
-				return nil, err
-			}
-		}
-		if ci.CertDomain != "" {
-			if err := pair.Leaf.VerifyHostname(ci.CertDomain); err != nil {
-				return nil, err
-			}
-		}
-		if now := time.Now(); now.Before(pair.Leaf.NotBefore) || !now.Before(pair.Leaf.NotAfter) {
-			return nil, errors.New("FCN v3 certificate falls outside its validity interval")
-		}
-		return &pair, nil
-	}
-	current, err := load()
+	cfg, err := fcnFileCertificateConfig(ci.CertFile, ci.KeyFile, ci.CertDomain, ci.RejectUnknownSni)
 	if err != nil {
 		return nil, fmt.Errorf("FCN v3 certificate: %w", err)
 	}
-	var mu sync.Mutex
-	return &tls.Config{GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		// Re-read the complete pair for new handshakes. A failed or partial
-		// rotation leaves the last valid pair available until it expires.
-		if next, err := load(); err == nil {
-			current = next
-		}
-		if !time.Now().Before(current.Leaf.NotAfter) {
-			return nil, errors.New("FCN v3 certificate expired")
-		}
-		if ci.RejectUnknownSni && (hello == nil || current.Leaf.VerifyHostname(hello.ServerName) != nil) {
-			return nil, errors.New("FCN v3 unknown TLS server name")
-		}
-		return current, nil
-	}}, nil
+	return cfg, nil
 }
 
 func (v *V2Core) addFCNV3(tag string, info *panel.NodeInfo) error {

@@ -8,16 +8,76 @@ import (
 	"io"
 	"net"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/fastcat920/fcn"
+	tls "github.com/metacubex/tls"
 	panel "github.com/wyx2685/v2node/api/v2board"
 	"github.com/wyx2685/v2node/conf"
 	"github.com/wyx2685/v2node/limiter"
 )
+
+func TestFCNCertificateRotationWithoutSNI(t *testing.T) {
+	dir := t.TempDir()
+	ci := &panel.CertInfo{CertMode: "http", CertDomain: "entry.example", CertFile: filepath.Join(dir, "cert"), KeyFile: filepath.Join(dir, "key")}
+	cert, key, root := fcnV3TestCertificate(t, 1)
+	nextCert, nextKey, nextRoot := fcnV3TestCertificate(t, 2)
+	writeFCNV3TestFile(t, ci.CertFile, cert)
+	writeFCNV3TestFile(t, ci.KeyFile, key)
+	serverConfig, err := fcnCertificateConfig(ci)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverConfig.MinVersion = tls.VersionTLS13
+	serverConfig.SessionTicketsDisabled = true
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	roots.AddCert(nextRoot)
+	// An IP server name is verified by the client but omitted from TLS SNI.
+	// These fixture certificates are verified explicitly against the test roots
+	// because their SAN is the configured DNS identity.
+	clientConfig := &tls.Config{
+		ServerName: "127.0.0.1", MinVersion: tls.VersionTLS13, InsecureSkipVerify: true,
+		VerifyConnection: func(state tls.ConnectionState) error {
+			_, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{DNSName: ci.CertDomain, Roots: roots})
+			return err
+		},
+	}
+	check := func(want int64) {
+		t.Helper()
+		s, c := net.Pipe()
+		defer s.Close()
+		defer c.Close()
+		deadline := time.Now().Add(3 * time.Second)
+		_ = s.SetDeadline(deadline)
+		_ = c.SetDeadline(deadline)
+		server := tls.Server(s, serverConfig)
+		client := tls.Client(c, clientConfig)
+		done := make(chan error, 1)
+		go func() { done <- server.Handshake() }()
+		if err := client.Handshake(); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if got := server.ConnectionState().ServerName; got != "" {
+			t.Fatalf("unexpected SNI %q", got)
+		}
+		if serial := client.ConnectionState().PeerCertificates[0].SerialNumber.Int64(); serial != want {
+			t.Fatalf("certificate serial %d, want %d", serial, want)
+		}
+	}
+	check(1)
+	writeFCNV3TestFile(t, ci.KeyFile, nextKey)
+	check(1)
+	writeFCNV3TestFile(t, ci.CertFile, nextCert)
+	check(2)
+}
 
 func TestFCNAccountTrafficAndRevocation(t *testing.T) {
 	for _, version := range []int{1, 2} {

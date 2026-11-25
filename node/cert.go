@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	panel "github.com/wyx2685/v2node/api/v2board"
 	"github.com/wyx2685/v2node/common/file"
 )
 
@@ -22,7 +24,7 @@ func (c *Controller) renewCertTask(_ context.Context) error {
 		log.WithField("tag", c.tag).Info("new lego error: ", err)
 		return nil
 	}
-	err = l.RenewCert()
+	err = l.RenewCert(isFCNCertificateNode(c.info.Type))
 	if err != nil {
 		log.WithField("tag", c.tag).Info("renew cert error: ", err)
 		return nil
@@ -42,7 +44,14 @@ func (c *Controller) requestCert() error {
 		if cert.CertFile == "" || cert.KeyFile == "" {
 			return fmt.Errorf("cert file path or key file path not exist")
 		}
-		if file.IsExist(cert.CertFile) && file.IsExist(cert.KeyFile) {
+		if isFCNCertificateNode(c.info.Type) {
+			if cert.CertDomain == "" {
+				return fmt.Errorf("FCN automatic certificates require a server name")
+			}
+			if reusableFCNAutomaticCertificate(cert, nil) {
+				return nil
+			}
+		} else if file.IsExist(cert.CertFile) && file.IsExist(cert.KeyFile) {
 			return nil
 		}
 		l, err := NewLego(cert)
@@ -88,6 +97,38 @@ func (c *Controller) requestCert() error {
 		return fmt.Errorf("unsupported certmode: %s", cert.CertMode)
 	}
 	return nil
+}
+
+func isFCNCertificateNode(nodeType string) bool {
+	return nodeType == "fcn-v1" || nodeType == "fcn-v2" || nodeType == "fcn-v3"
+}
+
+func reusableFCNAutomaticCertificate(cert *panel.CertInfo, roots *x509.CertPool) bool {
+	pair, err := tls.LoadX509KeyPair(cert.CertFile, cert.KeyFile)
+	if err != nil || cert.CertDomain == "" {
+		return false
+	}
+	leaf := pair.Leaf
+	if leaf == nil {
+		leaf, err = x509.ParseCertificate(pair.Certificate[0])
+		if err != nil {
+			return false
+		}
+	}
+	chain := x509.NewCertPool()
+	for _, der := range pair.Certificate[1:] {
+		intermediate, err := x509.ParseCertificate(der)
+		if err != nil {
+			return false
+		}
+		chain.AddCert(intermediate)
+	}
+	// A previous self-signed or expired certificate can share these paths.
+	// Require a valid chain for the current HTTP-01 / DNS-01 identity.
+	_, err = leaf.Verify(x509.VerifyOptions{
+		DNSName: cert.CertDomain, Roots: roots, Intermediates: chain,
+	})
+	return err == nil
 }
 
 func generateSelfSslCertificate(domain, certPath, keyPath string) error {

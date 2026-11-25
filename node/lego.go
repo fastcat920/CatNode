@@ -105,15 +105,22 @@ func (l *Lego) CreateCert() (err error) {
 	return nil
 }
 
-func (l *Lego) RenewCert() error {
+func (l *Lego) RenewCert(renewConfiguredDomain bool) error {
 	file, err := os.ReadFile(l.config.CertFile)
 	if err != nil {
 		return fmt.Errorf("read cert file error: %s", err)
 	}
-	if e, err := l.CheckCert(file); !e {
-		return nil
-	} else if err != nil {
+	renew, err := l.CheckCert(file)
+	if err != nil {
 		return fmt.Errorf("check cert error: %s", err)
+	}
+	if !renew {
+		return nil
+	}
+	if renewConfiguredDomain {
+		// A seeded certificate may cover several names or a wildcard. Issue
+		// only the identity managed by this FCN node and its challenge.
+		return l.CreateCert()
 	}
 	res, err := l.client.Certificate.Renew(certificate.Resource{
 		Domain:      l.config.CertDomain,
@@ -146,23 +153,32 @@ func (l *Lego) parseParams(path string) string {
 	return r.Replace(path)
 }
 func (l *Lego) writeCert(certificates *certificate.Resource) error {
-	err := checkPath(l.config.CertFile)
-	if err != nil {
-		return fmt.Errorf("check path error: %s", err)
+	if err := writeCertificateFile(l.parseParams(l.config.CertFile), certificates.Certificate, 0644); err != nil {
+		return err
 	}
-	err = os.WriteFile(l.parseParams(l.config.CertFile), certificates.Certificate, 0644)
+	return writeCertificateFile(l.parseParams(l.config.KeyFile), certificates.PrivateKey, 0600)
+}
+
+func writeCertificateFile(filename string, data []byte, mode os.FileMode) error {
+	if err := checkPath(filename); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(path.Dir(filename), ".catnode-certificate-*")
 	if err != nil {
 		return err
 	}
-	err = checkPath(l.config.KeyFile)
-	if err != nil {
-		return fmt.Errorf("check path error: %s", err)
-	}
-	err = os.WriteFile(l.parseParams(l.config.KeyFile), certificates.PrivateKey, 0644)
-	if err != nil {
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if err := f.Chmod(mode); err != nil {
 		return err
 	}
-	return nil
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), filename)
 }
 
 type User struct {
@@ -239,21 +255,17 @@ func EncodePrivate(privKey *ecdsa.PrivateKey) (string, error) {
 	return string(pemEncoded), nil
 }
 func (u *User) Save(path string) error {
-	err := checkPath(path)
-	if err != nil {
-		return fmt.Errorf("check path error: %s", err)
-	}
-	u.KeyEncoded, _ = EncodePrivate(u.key.(*ecdsa.PrivateKey))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	key, err := EncodePrivate(u.key.(*ecdsa.PrivateKey))
 	if err != nil {
 		return err
 	}
-	err = json.NewEncoder(f).Encode(u)
+	account := *u
+	account.KeyEncoded = key
+	data, err := json.Marshal(&account)
 	if err != nil {
-		return fmt.Errorf("marshal json error: %s", err)
+		return fmt.Errorf("marshal ACME account: %w", err)
 	}
-	u.KeyEncoded = ""
-	return nil
+	return writeCertificateFile(path, data, 0600)
 }
 
 func (u *User) DecodePrivate(pemEncodedPriv string) (*ecdsa.PrivateKey, error) {

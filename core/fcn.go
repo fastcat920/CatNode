@@ -2,14 +2,17 @@ package core
 
 import (
 	"context"
+	"crypto/x509"
+	"errors"
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"net"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/fastcat920/fcn"
 	tls "github.com/metacubex/tls"
+	log "github.com/sirupsen/logrus"
 	panel "github.com/wyx2685/v2node/api/v2board"
 	"github.com/wyx2685/v2node/common/format"
 	xn "github.com/xtls/xray-core/common/net"
@@ -39,18 +42,72 @@ func (v *V2Core) fcnNode(tag string) *fcnNode {
 	defer v.fcnMu.Unlock()
 	return v.fcnNodes[tag]
 }
+
+func fcnCertificateConfig(ci *panel.CertInfo) (*tls.Config, error) {
+	if ci.CertMode == "remote" {
+		pair, err := tls.X509KeyPair([]byte(ci.TlsCert), []byte(ci.TlsKey))
+		if err != nil {
+			return nil, err
+		}
+		return &tls.Config{Certificates: []tls.Certificate{pair}}, nil
+	}
+	serverName := ""
+	if ci.CertMode == "http" || ci.CertMode == "dns" {
+		serverName = ci.CertDomain
+	}
+	return fcnFileCertificateConfig(ci.CertFile, ci.KeyFile, serverName, false)
+}
+
+func fcnFileCertificateConfig(certFile, keyFile, serverName string, rejectUnknownSNI bool) (*tls.Config, error) {
+	load := func() (*tls.Certificate, error) {
+		pair, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, err
+		}
+		if pair.Leaf == nil {
+			pair.Leaf, err = x509.ParseCertificate(pair.Certificate[0])
+			if err != nil {
+				return nil, err
+			}
+		}
+		if serverName != "" {
+			if err := pair.Leaf.VerifyHostname(serverName); err != nil {
+				return nil, err
+			}
+		}
+		if now := time.Now(); now.Before(pair.Leaf.NotBefore) || !now.Before(pair.Leaf.NotAfter) {
+			return nil, errors.New("FCN certificate falls outside its validity interval")
+		}
+		return &pair, nil
+	}
+	current, err := load()
+	if err != nil {
+		return nil, err
+	}
+	var mu sync.Mutex
+	// Leaving Certificates empty also routes handshakes without SNI through
+	// GetCertificate. A partial rotation is safe until the prior pair expires.
+	return &tls.Config{GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if next, err := load(); err == nil {
+			current = next
+		}
+		if !time.Now().Before(current.Leaf.NotAfter) {
+			return nil, errors.New("FCN certificate expired")
+		}
+		if rejectUnknownSNI && (hello == nil || current.Leaf.VerifyHostname(hello.ServerName) != nil) {
+			return nil, errors.New("FCN unknown TLS server name")
+		}
+		return current, nil
+	}}, nil
+}
+
 func (v *V2Core) addFCN(tag string, info *panel.NodeInfo) error {
 	if info.Security != panel.Tls || info.Common.CertInfo == nil {
 		return fmt.Errorf("FCN requires a TLS certificate")
 	}
-	ci := info.Common.CertInfo
-	var cert tls.Certificate
-	var err error
-	if ci.CertMode == "remote" {
-		cert, err = tls.X509KeyPair([]byte(ci.TlsCert), []byte(ci.TlsKey))
-	} else {
-		cert, err = tls.LoadX509KeyPair(ci.CertFile, ci.KeyFile)
-	}
+	tlsConfig, err := fcnCertificateConfig(info.Common.CertInfo)
 	if err != nil {
 		return fmt.Errorf("FCN certificate: %w", err)
 	}
@@ -120,13 +177,7 @@ func (v *V2Core) addFCN(tag string, info *panel.NodeInfo) error {
 	go func() {
 		defer close(n.done)
 		defer n.socket.Close()
-		if err := server.ServeQUIC(ctx, n.socket, &tls.Config{Certificates: []tls.Certificate{cert}, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-			if ci.CertMode == "remote" {
-				return &cert, nil
-			}
-			fresh, err := tls.LoadX509KeyPair(ci.CertFile, ci.KeyFile)
-			return &fresh, err
-		}}); err != nil {
+		if err := server.ServeQUIC(ctx, n.socket, tlsConfig); err != nil {
 			log.WithField("tag", tag).WithError(err).Error("FCN listener failed")
 			cancel()
 		}
