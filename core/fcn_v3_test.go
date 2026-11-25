@@ -205,8 +205,9 @@ func TestFCNV3PanelDispatchTrafficAndRevocation(t *testing.T) {
 	}
 	pool := x509.NewCertPool()
 	pool.AddCert(root)
-	client, err := fcnv3.NewClient(fcnv3.Config{Endpoint: n.socket.LocalAddr().String(), ServerName: "entry.example", Roots: pool,
-		Account: credential.ID, Secret: credential.Secret, EnableUDP: true, AllowDomainTargets: true})
+	clientConfig := fcnv3.Config{Endpoint: n.socket.LocalAddr().String(), ServerName: "entry.example", Roots: pool,
+		Account: credential.ID, Secret: credential.Secret, EnableUDP: true, AllowDomainTargets: true}
+	client, err := fcnv3.NewClient(clientConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +215,7 @@ func TestFCNV3PanelDispatchTrafficAndRevocation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	probeTCP := func(target string) net.Conn {
+	probeTCP := func(client *fcnv3.Client, target string) net.Conn {
 		t.Helper()
 		conn, err := client.Dial(ctx, target)
 		if err != nil {
@@ -223,7 +224,7 @@ func TestFCNV3PanelDispatchTrafficAndRevocation(t *testing.T) {
 		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 		return conn
 	}
-	closedWrite := probeTCP("origin.example:443")
+	closedWrite := probeTCP(client, "origin.example:443")
 	defer closedWrite.Close()
 	if _, err := closedWrite.Write([]byte("!half-close")); err != nil {
 		t.Fatal(err)
@@ -234,7 +235,7 @@ func TestFCNV3PanelDispatchTrafficAndRevocation(t *testing.T) {
 	if got, err := io.ReadAll(closedWrite); err != nil || string(got) != "half-close" {
 		t.Fatalf("closing the client write half lost the origin response: %q %v", got, err)
 	}
-	stream := probeTCP("93.184.216.34:443")
+	stream := probeTCP(client, "93.184.216.34:443")
 	defer stream.Close()
 	if _, err := stream.Write([]byte("account-TCP")); err != nil {
 		t.Fatal(err)
@@ -256,14 +257,6 @@ func TestFCNV3PanelDispatchTrafficAndRevocation(t *testing.T) {
 			t.Fatalf("invalid metered UDP echo: %d bytes %v", len(received), err)
 		}
 	}
-	for _, target := range []string{"127.0.0.1:443", "private.example:443", "blocked.example:443"} {
-		bad := probeTCP(target)
-		_, _ = bad.Write([]byte("denied"))
-		if _, err := bad.Read(buf); err == nil {
-			t.Errorf("target %s unexpectedly reached an origin", target)
-		}
-		_ = bad.Close()
-	}
 	traffic, err := v.GetUserTrafficSlice(tag, 0)
 	want := int64(11 + 11 + 12 + fcnv3.MaxUDPPayload)
 	if err != nil || len(traffic) != 1 || traffic[0].UID != 42 || traffic[0].Upload != want || traffic[0].Download != want-1 {
@@ -278,7 +271,7 @@ func TestFCNV3PanelDispatchTrafficAndRevocation(t *testing.T) {
 	if _, err := io.ReadFull(stream, buf[:4]); err != nil || string(buf[:4]) != "tail" {
 		t.Fatalf("invalid final TCP echo: %q %v", buf[:4], err)
 	}
-	if err := v.ReplaceFCNV3Users(tag, []panel.UserInfo{}); err != nil {
+	if err := v.ReplaceFCNV3Users(tag, users[1:]); err != nil {
 		t.Fatal(err)
 	}
 	traffic, err = v.GetUserTrafficSlice(tag, 0)
@@ -297,9 +290,30 @@ func TestFCNV3PanelDispatchTrafficAndRevocation(t *testing.T) {
 	if _, err := client.DialUDP(ctx, "origin.example:443"); !errors.Is(err, fcnv3.ErrRejected) {
 		t.Fatalf("revoked UUID opened a new UDP association: %v", err)
 	}
-	denied := probeTCP("origin.example:443")
+	denied := probeTCP(client, "origin.example:443")
 	defer denied.Close()
 	if _, err := denied.Read(buf); !errors.Is(err, fcnv3.ErrRejected) {
 		t.Fatalf("revoked UUID opened a new TCP stream: %v", err)
+	}
+
+	// Keep authorization and Xray routing failures separate from exact echo
+	// accounting. The dispatcher can meter upload before its blackhole closes.
+	routeCredential, err := fcnv3.CredentialFromUUID(users[1].Uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientConfig.Account, clientConfig.Secret = routeCredential.ID, routeCredential.Secret
+	routeClient, err := fcnv3.NewClient(clientConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer routeClient.Close()
+	for _, target := range []string{"127.0.0.1:443", "private.example:443", "blocked.example:443"} {
+		bad := probeTCP(routeClient, target)
+		_, _ = bad.Write([]byte("denied"))
+		if _, err := bad.Read(buf); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Errorf("target %s was not promptly rejected: %v", target, err)
+		}
+		_ = bad.Close()
 	}
 }

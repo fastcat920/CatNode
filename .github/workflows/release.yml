@@ -6,6 +6,8 @@ on:
     branches:
       - main
       - master
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
     paths:
       - "**/*.go"
       - "go.mod"
@@ -24,6 +26,7 @@ on:
 jobs:
 
   build:
+    if: github.event_name != 'push' || github.ref_type != 'tag'
     strategy:
       matrix:
         # Include amd64 on all platforms.
@@ -206,6 +209,7 @@ jobs:
           mkdir -p "dist/$name/site"
           cp deploy/website/index.html "dist/$name/site/"
           cp protocol/fcn/NOTICE "dist/$name/FCN-NOTICE"
+          cp protocol/fcnv3/internal/echparser/LICENSE "dist/$name/FCN-V3-GO-LICENSE"
           if [[ ${GITHUB_REF_TYPE:-} == tag ]]; then
             [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'Invalid CatNode release tag' >&2; exit 1; }
             sed "s|^base=.*|base=https://github.com/fastcat920/CatNode/releases/download/$version|" deploy/bootstrap.sh > dist/bootstrap.sh
@@ -234,3 +238,42 @@ jobs:
           overwrite: true
           file: dist/bootstrap.sh
           tag: ${{ github.ref }}
+
+  catnode-tag-prerelease:
+    if: github.event_name == 'push' && github.ref_type == 'tag' && !github.event.deleted
+    needs: catnode-bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested bundles
+        uses: actions/download-artifact@v7
+        with:
+          pattern: catnode-linux-*
+          path: release
+      - name: Verify bundles and publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ $RELEASE_TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          assets=()
+          for arch in amd64 arm64; do
+            bundle=catnode-linux-$arch
+            (
+              cd "release/$bundle"
+              sha256sum --check --strict "$bundle.tar.gz.sha256"
+              tar -tzf "$bundle.tar.gz" "$bundle/FCN-V3-GO-LICENSE" >/dev/null
+              bash -n bootstrap.sh
+              grep -Fx "base=https://github.com/$GH_REPO/releases/download/$RELEASE_TAG" bootstrap.sh
+            )
+            assets+=("release/$bundle/$bundle.tar.gz" "release/$bundle/$bundle.tar.gz.sha256")
+          done
+          bootstrap=release/catnode-linux-amd64/bootstrap.sh
+          cmp "$bootstrap" release/catnode-linux-arm64/bootstrap.sh
+          gh release create "$RELEASE_TAG" --verify-tag --prerelease --latest=false \
+            --title "CatNode $RELEASE_TAG" \
+            --notes 'Tested CatNode bundles for Linux amd64 and arm64.' \
+            "$bootstrap" "${assets[@]}"
