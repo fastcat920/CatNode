@@ -7,6 +7,7 @@ on:
 jobs:
   recover:
     runs-on: ubuntu-latest
+    timeout-minutes: 18
     permissions:
       actions: read
       contents: write
@@ -52,11 +53,14 @@ jobs:
             get_release
             jq -e --arg name "$name" --arg digest "$digest" 'any(.assets[]; .name == $name and .digest == $digest and .state == "uploaded")' release.json >/dev/null
           done
-          for delay in 0 5 15; do
+          for delay in 0 15 30 60 60 60 60 60 60 60 60 60 60 60 60; do
             sleep "$delay"
-            get_release
+            if ! get_release; then continue; fi
             if jq -e '.draft == false and .prerelease and (.assets | length == 5)' release.json >/dev/null; then exit 0; fi
-            gh api -X PATCH "$endpoint" -F draft=false -F prerelease=true -f make_latest=false --silent || true
+            curl --proto '=https' -fsS --max-time 20 -X PATCH -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
+              --data '{"draft":false,"prerelease":true,"make_latest":"false"}' \
+              "https://api.github.com/$endpoint" -o /dev/null || true
           done
           get_release
           jq -e '.draft == false and .prerelease and (.assets | length == 5)' release.json
