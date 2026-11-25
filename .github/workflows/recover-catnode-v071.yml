@@ -1,0 +1,62 @@
+name: Recover CatNode v0.7.1 release
+
+on:
+  push:
+    branches: [codex/fcn-v071-release-recovery]
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45649761497
+          pattern: catnode-linux-*
+          path: release
+      - name: Verify and publish the existing release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          release_id=458332675
+          endpoint="repos/$GH_REPO/releases/$release_id"
+          get_release() { gh api "$endpoint" > release.json && jq -e '.tag_name == "v0.7.1"' release.json >/dev/null; }
+          get_release
+          assets=(release/catnode-linux-amd64/bootstrap.sh)
+          grep -Fx "base=https://github.com/$GH_REPO/releases/download/v0.7.1" "${assets[0]}"
+          cmp "${assets[0]}" release/catnode-linux-arm64/bootstrap.sh
+          for arch in amd64 arm64; do
+            bundle="catnode-linux-$arch"
+            (cd "release/$bundle" && sha256sum --check --strict "$bundle.tar.gz.sha256")
+            assets+=("release/$bundle/$bundle.tar.gz" "release/$bundle/$bundle.tar.gz.sha256")
+          done
+          for asset in "${assets[@]}"; do
+            name=${asset##*/}
+            digest="sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
+            if jq -e --arg name "$name" --arg digest "$digest" 'any(.assets[]; .name == $name and .digest == $digest and .state == "uploaded")' release.json >/dev/null; then
+              continue
+            fi
+            jq -e '.draft' release.json >/dev/null
+            stale=$(jq -r --arg name "$name" '.assets[] | select(.name == $name and .state == "starter") | .id' release.json)
+            if [[ -n $stale ]]; then gh api -X DELETE "repos/$GH_REPO/releases/assets/$stale"; fi
+            if ! curl --proto '=https' -fsS --max-time 90 -X POST -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" --data-binary "@$asset" \
+              "https://uploads.github.com/repos/$GH_REPO/releases/$release_id/assets?name=$name" -o /dev/null; then
+              echo "Checking whether GitHub stored $name after the upload error."
+            fi
+            get_release
+            jq -e --arg name "$name" --arg digest "$digest" 'any(.assets[]; .name == $name and .digest == $digest and .state == "uploaded")' release.json >/dev/null
+          done
+          for delay in 0 5 15; do
+            sleep "$delay"
+            get_release
+            if jq -e '.draft == false and .prerelease and (.assets | length == 5)' release.json >/dev/null; then exit 0; fi
+            gh api -X PATCH "$endpoint" -F draft=false -F prerelease=true -f make_latest=false --silent || true
+          done
+          get_release
+          jq -e '.draft == false and .prerelease and (.assets | length == 5)' release.json
