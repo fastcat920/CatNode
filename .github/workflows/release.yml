@@ -273,7 +273,27 @@ jobs:
           done
           bootstrap=release/catnode-linux-amd64/bootstrap.sh
           cmp "$bootstrap" release/catnode-linux-arm64/bootstrap.sh
-          gh release create "$RELEASE_TAG" --verify-tag --prerelease --latest=false \
-            --title "CatNode $RELEASE_TAG" \
-            --notes 'Tested CatNode bundles for Linux amd64 and arm64.' \
-            "$bootstrap" "${assets[@]}"
+          publish() {
+            local draft
+            draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null) || draft=''
+            case "$draft" in
+              true)
+                gh release upload "$RELEASE_TAG" "$bootstrap" "${assets[@]}" --clobber &&
+                  gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+                ;;
+              false)
+                gh release view "$RELEASE_TAG" --json assets --jq '.assets | length == 5' | grep -qx true
+                ;;
+              *)
+                gh release create "$RELEASE_TAG" --verify-tag --prerelease --latest=false \
+                  --title "CatNode $RELEASE_TAG" \
+                  --notes 'Tested CatNode bundles for Linux amd64 and arm64.' \
+                  "$bootstrap" "${assets[@]}"
+                ;;
+            esac
+          }
+          for delay in 0 5 15; do
+            sleep "$delay"
+            if publish; then exit 0; fi
+          done
+          exit 1
