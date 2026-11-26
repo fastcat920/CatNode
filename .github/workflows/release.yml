@@ -12,6 +12,7 @@ on:
       - "**/*.go"
       - "go.mod"
       - "go.sum"
+      - "deploy/**"
       - ".github/workflows/release.yml"
   pull_request:
     types: [opened, synchronize, reopened]
@@ -19,6 +20,7 @@ on:
       - "**/*.go"
       - "go.mod"
       - "go.sum"
+      - "deploy/**"
       - ".github/workflows/release.yml"
   release:
     types: [published]
@@ -180,7 +182,7 @@ jobs:
           tag: ${{ github.ref }}
           file_glob: true
 
-  catnode-bundle:
+  fc-node-bundle:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -195,39 +197,39 @@ jobs:
           go test ./core ./node ./api/v2board
           (cd protocol/fcn && go test ./...)
           (cd protocol/fcnv3 && go test ./...)
-      - name: Package CatNode
+      - name: Package fc-node
         env:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: |
-          name=catnode-linux-${GOARCH}
+          name=fc-node-linux-${GOARCH}
           mkdir -p "dist/$name"
           version="${GITHUB_REF_NAME:-development}"
-          go build -trimpath -ldflags "-s -w -X github.com/wyx2685/v2node/cmd.version=$version" -o "dist/$name/catnode" .
-          cp deploy/install.sh deploy/native-install.sh deploy/catnode-fastcat-v2.service deploy/catnode-fastcat-v2-managed.conf LICENSE "dist/$name/"
+          go build -trimpath -ldflags "-s -w -X github.com/wyx2685/v2node/cmd.version=$version" -o "dist/$name/fc-node" .
+          cp deploy/native-install.sh LICENSE "dist/$name/"
           mkdir -p "dist/$name/site"
           cp deploy/website/index.html "dist/$name/site/"
           cp protocol/fcn/NOTICE "dist/$name/FCN-NOTICE"
           cp protocol/fcnv3/internal/echparser/LICENSE "dist/$name/FCN-V3-GO-LICENSE"
           if [[ ${GITHUB_REF_TYPE:-} == tag ]]; then
-            [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'Invalid CatNode release tag' >&2; exit 1; }
-            sed "s|^base=.*|base=https://github.com/fastcat920/CatNode/releases/download/$version|" deploy/bootstrap.sh > dist/bootstrap.sh
+            [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'Invalid fc-node release tag' >&2; exit 1; }
+            sed "s|^base=.*|base=https://github.com/fastcat920/CatNode/releases/download/$version|" deploy/bootstrap.sh > dist/fc-node-install.sh
           else
-            cp deploy/bootstrap.sh dist/bootstrap.sh
+            cp deploy/bootstrap.sh dist/fc-node-install.sh
           fi
           (cd dist && tar -czf "$name.tar.gz" "$name" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
       - uses: actions/upload-artifact@v6
         with:
-          name: catnode-linux-${{ matrix.arch }}
+          name: fc-node-linux-${{ matrix.arch }}
           path: dist/*
-      - name: Upload CatNode bundle
+      - name: Upload fc-node bundle
         if: github.event_name == 'release'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           overwrite: true
-          file: dist/catnode-linux-${{ matrix.arch }}.tar.gz*
+          file: dist/fc-node-linux-${{ matrix.arch }}.tar.gz*
           tag: ${{ github.ref }}
           file_glob: true
       - name: Upload bootstrap
@@ -236,22 +238,27 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           overwrite: true
-          file: dist/bootstrap.sh
+          file: dist/fc-node-install.sh
           tag: ${{ github.ref }}
 
-  catnode-tag-prerelease:
+  fc-node-tag-release:
     if: github.event_name == 'push' && github.ref_type == 'tag' && !github.event.deleted
-    needs: catnode-bundle
+    needs: fc-node-bundle
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Verify release comes from the mainline
+        run: git merge-base --is-ancestor HEAD origin/main
       - name: Download tested bundles
         uses: actions/download-artifact@v7
         with:
-          pattern: catnode-linux-*
+          pattern: fc-node-linux-*
           path: release
-      - name: Verify bundles and publish prerelease
+      - name: Verify bundles and publish release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -261,33 +268,33 @@ jobs:
           [[ $RELEASE_TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           assets=()
           for arch in amd64 arm64; do
-            bundle=catnode-linux-$arch
+            bundle=fc-node-linux-$arch
             (
               cd "release/$bundle"
               sha256sum --check --strict "$bundle.tar.gz.sha256"
               tar -tzf "$bundle.tar.gz" "$bundle/FCN-V3-GO-LICENSE" >/dev/null
-              bash -n bootstrap.sh
-              grep -Fx "base=https://github.com/$GH_REPO/releases/download/$RELEASE_TAG" bootstrap.sh
+              bash -n fc-node-install.sh
+              grep -Fx "base=https://github.com/$GH_REPO/releases/download/$RELEASE_TAG" fc-node-install.sh
             )
             assets+=("release/$bundle/$bundle.tar.gz" "release/$bundle/$bundle.tar.gz.sha256")
           done
-          bootstrap=release/catnode-linux-amd64/bootstrap.sh
-          cmp "$bootstrap" release/catnode-linux-arm64/bootstrap.sh
+          bootstrap=release/fc-node-linux-amd64/fc-node-install.sh
+          cmp "$bootstrap" release/fc-node-linux-arm64/fc-node-install.sh
           publish() {
             local draft
             draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null) || draft=''
             case "$draft" in
               true)
                 gh release upload "$RELEASE_TAG" "$bootstrap" "${assets[@]}" --clobber &&
-                  gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+                  gh release edit "$RELEASE_TAG" --draft=false --latest
                 ;;
               false)
                 gh release view "$RELEASE_TAG" --json assets --jq '.assets | length == 5' | grep -qx true
                 ;;
               *)
-                gh release create "$RELEASE_TAG" --verify-tag --prerelease --latest=false \
-                  --title "CatNode $RELEASE_TAG" \
-                  --notes 'Tested CatNode bundles for Linux amd64 and arm64.' \
+                gh release create "$RELEASE_TAG" --verify-tag --latest \
+                  --title "fc-node $RELEASE_TAG" \
+                  --notes 'Tested fc-node bundles for Linux amd64 and arm64.' \
                   "$bootstrap" "${assets[@]}"
                 ;;
             esac

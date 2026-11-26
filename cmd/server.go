@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
@@ -25,8 +24,8 @@ var (
 
 var serverCommand = cobra.Command{
 	Use:   "server",
-	Short: "Run v2node server",
-	Run:   serverHandle,
+	Short: "Run fc-node server",
+	RunE:  serverHandle,
 	Args:  cobra.NoArgs,
 }
 
@@ -40,7 +39,7 @@ func init() {
 	command.AddCommand(&serverCommand)
 }
 
-func serverHandle(_ *cobra.Command, _ []string) {
+func serverHandle(_ *cobra.Command, _ []string) error {
 	showVersion()
 	c := conf.New()
 	err := c.LoadFromPath(config)
@@ -50,8 +49,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		PadLevelText:     false,
 	})
 	if err != nil {
-		log.WithField("err", err).Error("Load config file failed")
-		return
+		return fmt.Errorf("load config file failed: %w", err)
 	}
 	switch c.LogConfig.Level {
 	case "debug":
@@ -84,8 +82,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	//get node info
 	nodes, err := node.New(c.NodeConfigs)
 	if err != nil {
-		log.WithField("err", err).Error("Get node info failed")
-		return
+		return fmt.Errorf("get node info failed: %w", err)
 	}
 	log.Info("Got nodes info from server")
 	//core
@@ -94,33 +91,16 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	v2core.ReloadCh = reloadCh
 	err = v2core.Start(nodes.NodeInfos)
 	if err != nil {
-		log.WithField("err", err).Error("Start core failed")
-		return
+		return fmt.Errorf("start core failed: %w", err)
 	}
-	defer v2core.Close()
+	defer func() { v2core.Close() }()
 	//node
 	err = nodes.Start(c.NodeConfigs, v2core)
 	if err != nil {
-		log.WithField("err", err).Error("Run nodes failed")
-		return
+		return fmt.Errorf("run nodes failed: %w", err)
 	}
+	defer func() { nodes.Close() }()
 	log.Info("Nodes started")
-	v2ctx, cancelV2 := context.WithCancel(context.Background())
-	defer cancelV2()
-	var v2Done <-chan error
-	if c.FastCatV2 != nil {
-		v2Done, err = c.FastCatV2.Start(v2ctx)
-		if err != nil {
-			log.WithError(err).Error("Start FastCat v2 failed")
-			return
-		}
-		defer func() {
-			cancelV2()
-			if v2Done != nil {
-				<-v2Done
-			}
-		}()
-	}
 	if watch {
 		// On file change, just signal reload; do not run reload concurrently here
 		err = c.Watch(config, func() {
@@ -130,8 +110,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 			}
 		})
 		if err != nil {
-			log.WithField("err", err).Error("start watch failed")
-			return
+			return fmt.Errorf("start watch failed: %w", err)
 		}
 	}
 	// clear memory
@@ -144,13 +123,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		select {
 		case <-osSignals:
 			log.Info("收到退出信号，正在关闭程序...")
-			if c.FastCatV2 == nil {
-				os.Exit(0)
-			}
-			return
-		case err := <-v2Done:
-			v2Done = nil
-			log.WithError(err).Error("FastCat v2 listener stopped")
+			return nil
 		case <-reloadCh:
 			log.Info("收到重启信号，正在重新加载配置...")
 			if err := reload(config, &nodes, &v2core); err != nil {

@@ -1,22 +1,12 @@
-# CatNode
+# fc-node
 
-CatNode 是基于 [v2node](https://github.com/wyx2685/v2node) 的 Catboard 节点后端，
-支持原有 Xray 节点和 FastCat v2。FastCat v2 提供 HTTP/2 和 HTTP/3 入口，
-可从 Catboard 自动同步设备授权。
+fc-node 是 Catboard 节点后端，支持 Shadowsocks、VMess、VLESS、Trojan、TUIC、Hysteria 2、AnyTLS 和 FCN v1、v2、v3。
 
-## 安装 FastCat v2 节点
+## 部署节点
 
-在 Linux x86_64 节点服务器执行：
+在 Catboard 中保存节点，复制一键安装指令，在 Linux amd64 或 arm64 服务器以 root 执行。安装器选择对应架构的发行包并校验 SHA-256。从面板同步协议、账号、证书和流量配置。同一个节点 ID 再次执行会升级原有 native 服务。
 
-```bash
-curl -fLO https://github.com/fastcat920/CatNode/releases/download/v0.4.0/catnode-linux-amd64.tar.gz
-tar -xzf catnode-linux-amd64.tar.gz
-cd catnode-linux-amd64
-sudo bash install.sh
-```
-
-安装器会提示面板 HTTPS 地址、节点 ID、证书域名、端口和节点通讯 Token。
-部署细节见 [FastCat v2 部署说明](deploy/fastcat-v2.md)。
+现有 FastCat v2 节点需要在面板里改用受支持的协议。迁移前先核对旧服务使用的端口与证书路径，并在切换端口时停用旧服务。FCN v1 和 v2 可使用面板配置的证书或固定服务端公钥，FCN v3 使用受信任的证书。按面板配置放行对应的 TCP 或 UDP 端口。
 
 ## 上游与许可证
 

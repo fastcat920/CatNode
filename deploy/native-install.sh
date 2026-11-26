@@ -24,23 +24,28 @@ elif [[ -z $api_key ]]; then
 fi
 [[ -n $api_key && $api_key != *[$'\001'-$'\037']* && $api_key != *'"'* && $api_key != *'\'* ]] || { echo 'Token 格式无效。' >&2; exit 2; }
 bundle=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-[[ -x $bundle/catnode ]] || { echo '请在 CatNode 发布包中运行。' >&2; exit 1; }
+[[ -x $bundle/fc-node ]] || { echo '请在 fc-node 发布包中运行。' >&2; exit 1; }
 config_dir=/etc/catnode/native-$node_id
 service=catnode-native-$node_id
 install -d -m 700 "$config_dir"
 # Existing native certificates default to this shared directory.
 install -d -m 700 /etc/v2node
-install -m 755 "$bundle/catnode" "$config_dir/catnode"
 umask 077
-if [[ -f $config_dir/config.json ]]; then cp -p "$config_dir/config.json" "$config_dir/config.json.bak"; fi
-printf '{"Log":{"Level":"info","Access":"none"},"Nodes":[{"ApiHost":"%s","NodeID":%s,"ApiKey":"%s"}]}\n' "${api_host%/}" "$node_id" "$api_key" > "$config_dir/config.json"
-cat > "/etc/systemd/system/$service.service" <<UNIT
+exec 9>"$config_dir/install.lock"
+flock -x 9
+unit=/etc/systemd/system/$service.service
+stage=$(mktemp -d "$config_dir/.install.XXXXXX")
+unit_stage=$(mktemp "$unit.XXXXXX")
+trap 'rm -rf -- "$stage"; rm -f -- "$unit_stage"' EXIT
+install -m 755 "$bundle/fc-node" "$stage/fc-node"
+printf '{"Log":{"Level":"info","Access":"none"},"Nodes":[{"ApiHost":"%s","NodeID":%s,"ApiKey":"%s"}]}\n' "${api_host%/}" "$node_id" "$api_key" > "$stage/config.json"
+cat > "$unit_stage" <<UNIT
 [Unit]
-Description=CatNode native node $node_id
+Description=fc-node native node $node_id
 After=network-online.target
 Wants=network-online.target
 [Service]
-ExecStart=$config_dir/catnode server -c $config_dir/config.json
+ExecStart=$config_dir/fc-node server -c $config_dir/config.json
 WorkingDirectory=$config_dir
 Restart=on-failure
 RestartSec=3
@@ -50,8 +55,35 @@ PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 UNIT
-systemctl daemon-reload
-systemctl enable "$service"
-systemctl restart "$service"
-systemctl is-active --quiet "$service"
-echo "CatNode 节点 $node_id 已启动；协议、证书、账号和计量参数均由面板同步。请放行面板配置的 UDP 服务端口。"
+chmod 644 "$unit_stage"
+for file in fc-node config.json; do
+  if [[ -f $config_dir/$file ]]; then
+    cp -p -- "$config_dir/$file" "$stage/$file.backup"
+  fi
+done
+if [[ -f $unit ]]; then cp -p -- "$unit" "$stage/unit.backup"; fi
+
+mv -f -- "$stage/fc-node" "$config_dir/fc-node"
+mv -f -- "$stage/config.json" "$config_dir/config.json"
+mv -f -- "$unit_stage" "$unit"
+if ! { systemctl daemon-reload && systemctl restart "$service" &&
+       sleep 4 && systemctl is-active --quiet "$service" && systemctl enable "$service"; }; then
+  systemctl stop "$service" || true
+  for file in fc-node config.json; do
+    if [[ -f $stage/$file.backup ]]; then
+      mv -f -- "$stage/$file.backup" "$config_dir/$file"
+    else
+      rm -f -- "$config_dir/$file"
+    fi
+  done
+  if [[ -f $stage/unit.backup ]]; then
+    install -m 644 "$stage/unit.backup" "$unit"
+    systemctl daemon-reload && systemctl restart "$service" || true
+  else
+    rm -f -- "$unit"
+    systemctl daemon-reload || true
+  fi
+  echo "fc-node 启动失败，请查看 journalctl -u $service。" >&2
+  exit 1
+fi
+echo "fc-node 节点 $node_id 已启动；协议、证书、账号和计量参数均由面板同步。请按面板协议放行对应的 TCP 或 UDP 端口。"

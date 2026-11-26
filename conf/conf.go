@@ -5,17 +5,15 @@ import (
 	"os"
 
 	"github.com/spf13/viper"
-	"github.com/wyx2685/v2node/internal/fastcatv2"
 )
 
 const DefaultNodeRetryCount = 1
 const DefaultNodeTimeout = 15
 
 type Conf struct {
-	LogConfig   LogConfig           `mapstructure:"Log"`
-	NodeConfigs []NodeConfig        `mapstructure:"Nodes"`
-	FastCatV2   *fastcatv2.Settings `mapstructure:"FastCatV2"`
-	PprofPort   int                 `mapstructure:"PprofPort"`
+	LogConfig   LogConfig    `mapstructure:"Log"`
+	NodeConfigs []NodeConfig `mapstructure:"Nodes"`
+	PprofPort   int          `mapstructure:"PprofPort"`
 }
 
 type LogConfig struct {
@@ -52,6 +50,9 @@ func (p *Conf) LoadFromPath(filePath string) error {
 	v.SetConfigFile(filePath)
 	if err := v.ReadInConfig(); err != nil {
 		return fmt.Errorf("read config file error: %s", err)
+	}
+	if v.IsSet("FastCatV2") {
+		return fmt.Errorf("FastCat v2 has been retired; configure a supported panel node under Nodes")
 	}
 	if err := v.Unmarshal(p); err != nil {
 		return fmt.Errorf("unmarshal config error: %s", err)
