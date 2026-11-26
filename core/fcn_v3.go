@@ -79,6 +79,10 @@ func (v *V2Core) addFCNV3(tag string, info *panel.NodeInfo) error {
 	n := &fcnV3Node{tag: tag, done: make(chan struct{}), dns: dnsClient, dnsSlots: make(chan struct{}, 32)}
 	n.server, err = fcnv3.NewServer(fcnv3.ServerConfig{
 		TLSConfig: tlsConfig, EnableUDP: true, ConfigureQUIC: fcn.ApplyQUICBBR,
+		OnConnectRejected: func(network, reason string) {
+			log.WithFields(log.Fields{"tag": tag, "network": network, "reason": reason}).
+				Warn("FCN v3 CONNECT rejected")
+		},
 		Dispatch: func(setup, lifetime context.Context, request fcnv3.DispatchRequest) (net.Conn, error) {
 			return n.dispatch(v.Server, setup, lifetime, request)
 		},
