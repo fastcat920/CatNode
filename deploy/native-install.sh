@@ -83,7 +83,7 @@ if ! { systemctl daemon-reload && systemctl restart "$service" &&
     rm -f -- "$unit"
     systemctl daemon-reload || true
   fi
-  echo "fc-node 启动失败，请查看 journalctl -u $service。" >&2
+  echo "fc-node 启动失败，请查看 journalctl -u ${service}。" >&2
   exit 1
 fi
 echo "fc-node 节点 $node_id 已启动；协议、证书、账号和计量参数均由面板同步。请按面板协议放行对应的 TCP 或 UDP 端口。"
